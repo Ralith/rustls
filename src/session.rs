@@ -13,7 +13,7 @@ use suites::SupportedCipherSuite;
 use cipher::{MessageDecrypter, MessageEncrypter, self};
 use vecbuf::{ChunkVecBuffer, WriteV};
 use key;
-use key_schedule::{SecretKind, KeySchedule, Protocol};
+use key_schedule::{SecretKind, KeySchedule};
 use prf;
 use rand;
 use quic;
@@ -203,6 +203,13 @@ pub trait Session: quic::QuicExt + Read + Write + Send + Sync {
             }
         }
     }
+}
+
+#[derive(Copy, Clone)]
+pub enum Protocol {
+    Tls13,
+    #[cfg(feature = "quic")]
+    Quic,
 }
 
 #[derive(Clone, Debug)]

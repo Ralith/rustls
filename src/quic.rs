@@ -6,8 +6,8 @@ use msgs::handshake::{ClientExtension, ServerExtension, UnknownExtension};
 use msgs::message::{Message, MessagePayload};
 use server::{ServerConfig, ServerSession, ServerSessionImpl};
 use error::TLSError;
-use key_schedule::{SecretKind, Protocol};
-use session::SessionCommon;
+use key_schedule::SecretKind;
+use session::{SessionCommon, Protocol};
 
 use std::sync::Arc;
 use webpki;

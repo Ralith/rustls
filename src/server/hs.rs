@@ -21,10 +21,10 @@ use msgs::handshake::{CertReqExtension, SupportedMandatedSignatureSchemes};
 use msgs::ccs::ChangeCipherSpecPayload;
 use msgs::codec::Codec;
 use msgs::persist;
-use session::SessionSecrets;
+use session::{SessionSecrets, Protocol};
 use cipher;
 use server::ServerSessionImpl;
-use key_schedule::{KeySchedule, SecretKind, Protocol};
+use key_schedule::{KeySchedule, SecretKind};
 use suites;
 use verify;
 use util;
@@ -305,7 +305,7 @@ impl ExpectClientHello {
         let suite_hash = sess.common.get_suite_assert().get_hash();
         let handshake_hash = sess.common.hs_transcript.get_hash_given(suite_hash, &binder_plaintext);
 
-        let mut key_schedule = KeySchedule::new(suite_hash, sess.common.protocol);
+        let mut key_schedule = KeySchedule::new(suite_hash);
         key_schedule.input_secret(psk);
         let base_key = key_schedule.derive(SecretKind::ResumptionPSKBinderKey,
                                            key_schedule.get_hash_of_empty_message());
@@ -360,7 +360,7 @@ impl ExpectClientHello {
 
         // Start key schedule
         let suite = sess.common.get_suite_assert();
-        let mut key_schedule = KeySchedule::new(suite.get_hash(), sess.common.protocol);
+        let mut key_schedule = KeySchedule::new(suite.get_hash());
         if let Some(psk) = resuming_psk {
             key_schedule.input_secret(&psk);
         } else {

@@ -42,13 +42,31 @@ pub struct KeySchedule {
     need_derive_for_extract: bool,
     hash: &'static digest::Algorithm,
     hash_of_empty_message: [u8; digest::MAX_OUTPUT_LEN],
+    protocol: Protocol,
     pub current_client_traffic_secret: Vec<u8>,
     pub current_server_traffic_secret: Vec<u8>,
     pub current_exporter_secret: Vec<u8>,
 }
 
+#[derive(Copy, Clone)]
+pub enum Protocol {
+    Tls13,
+    #[cfg(feature = "quic")]
+    Quic,
+}
+
+impl Protocol {
+    fn prefix(&self) -> &'static [u8] {
+        match *self {
+            Protocol::Tls13 => b"tls13 ",
+            #[cfg(feature = "quic")]
+            Protocol::Quic => b"quic ",
+        }
+    }
+}
+
 impl KeySchedule {
-    pub fn new(hash: &'static digest::Algorithm) -> KeySchedule {
+    pub fn new(hash: &'static digest::Algorithm, protocol: Protocol) -> KeySchedule {
         let zeroes = [0u8; digest::MAX_OUTPUT_LEN];
 
         let mut empty_hash = [0u8; digest::MAX_OUTPUT_LEN];
@@ -60,6 +78,7 @@ impl KeySchedule {
             need_derive_for_extract: false,
             hash,
             hash_of_empty_message: empty_hash,
+            protocol,
             current_server_traffic_secret: Vec::new(),
             current_client_traffic_secret: Vec::new(),
             current_exporter_secret: Vec::new(),
@@ -94,6 +113,7 @@ impl KeySchedule {
         debug_assert_eq!(hs_hash.len(), self.hash.output_len);
 
         _hkdf_expand_label_vec(&self.current,
+                               self.protocol.prefix(),
                                kind.to_bytes(),
                                hs_hash,
                                self.hash.output_len)
@@ -124,6 +144,7 @@ impl KeySchedule {
         debug_assert_eq!(hs_hash.len(), self.hash.output_len);
 
         let hmac_key = _hkdf_expand_label_vec(&hmac::SigningKey::new(self.hash, base_key),
+                                              self.protocol.prefix(),
                                               b"finished",
                                               &[],
                                               self.hash.output_len);
@@ -138,6 +159,7 @@ impl KeySchedule {
     pub fn derive_next(&self, kind: SecretKind) -> Vec<u8> {
         let base_key = self.current_traffic_secret(kind);
         _hkdf_expand_label_vec(&hmac::SigningKey::new(self.hash, base_key),
+                               self.protocol.prefix(),
                                b"traffic upd",
                                &[],
                                self.hash.output_len)
@@ -147,6 +169,7 @@ impl KeySchedule {
     /// ticket_nonce.
     pub fn derive_ticket_psk(&self, rms: &[u8], nonce: &[u8]) -> Vec<u8> {
         _hkdf_expand_label_vec(&hmac::SigningKey::new(self.hash, rms),
+                               self.protocol.prefix(),
                                b"resumption",
                                nonce,
                                self.hash.output_len)
@@ -164,6 +187,7 @@ impl KeySchedule {
         _hkdf_expand_label(&mut secret[..self.hash.output_len],
                            &hmac::SigningKey::new(self.hash,
                                                   &self.current_exporter_secret),
+                           self.protocol.prefix(),
                            label,
                            h_empty.as_ref());
 
@@ -175,6 +199,7 @@ impl KeySchedule {
 
         _hkdf_expand_label(out,
                            &hmac::SigningKey::new(self.hash, &secret[..self.hash.output_len]),
+                           self.protocol.prefix(),
                            b"exporter",
                            &h_context[..self.hash.output_len]);
         Ok(())
@@ -182,6 +207,7 @@ impl KeySchedule {
 }
 
 fn _hkdf_expand_label_vec(secret: &hmac::SigningKey,
+                          label_prefix: &[u8],
                           label: &[u8],
                           context: &[u8],
                           len: usize) -> Vec<u8> {
@@ -189,17 +215,16 @@ fn _hkdf_expand_label_vec(secret: &hmac::SigningKey,
     v.resize(len, 0u8);
     _hkdf_expand_label(&mut v,
                        secret,
-                       label,
+                       label_prefix, label,
                        context);
     v
 }
 
 fn _hkdf_expand_label(output: &mut [u8],
                       secret: &hmac::SigningKey,
+                      label_prefix: &[u8],
                       label: &[u8],
                       context: &[u8]) {
-    let label_prefix = b"tls13 ";
-
     let mut hkdflabel = Vec::new();
     (output.len() as u16).encode(&mut hkdflabel);
     ((label.len() + label_prefix.len()) as u8).encode(&mut hkdflabel);
@@ -212,23 +237,23 @@ fn _hkdf_expand_label(output: &mut [u8],
 }
 
 pub fn derive_traffic_key(hash: &'static digest::Algorithm, secret: &[u8], len: usize) -> Vec<u8> {
-    _hkdf_expand_label_vec(&hmac::SigningKey::new(hash, secret), b"key", &[], len)
+    _hkdf_expand_label_vec(&hmac::SigningKey::new(hash, secret), Protocol::Tls13.prefix(), b"key", &[], len)
 }
 
 pub fn derive_traffic_iv(hash: &'static digest::Algorithm, secret: &[u8], len: usize) -> Vec<u8> {
-    _hkdf_expand_label_vec(&hmac::SigningKey::new(hash, secret), b"iv", &[], len)
+    _hkdf_expand_label_vec(&hmac::SigningKey::new(hash, secret), Protocol::Tls13.prefix(), b"iv", &[], len)
 }
 
 #[cfg(test)]
 mod test {
-    use super::{KeySchedule, SecretKind, derive_traffic_key, derive_traffic_iv};
+    use super::{KeySchedule, SecretKind, Protocol, derive_traffic_key, derive_traffic_iv};
     use ring::digest;
 
     #[test]
     fn smoke_test() {
         let fake_handshake_hash = [0u8; 32];
 
-        let mut ks = KeySchedule::new(&digest::SHA256);
+        let mut ks = KeySchedule::new(&digest::SHA256, Protocol::Tls13);
         ks.input_empty(); // no PSK
         ks.derive(SecretKind::ResumptionPSKBinderKey, &fake_handshake_hash);
         ks.input_secret(&[1u8, 2u8, 3u8, 4u8]);
@@ -326,7 +351,7 @@ mod test {
         ];
 
         let hash = &digest::SHA256;
-        let mut ks = KeySchedule::new(hash);
+        let mut ks = KeySchedule::new(hash, Protocol::Tls13);
         ks.input_empty();
         ks.input_secret(&ecdhe_secret);
 

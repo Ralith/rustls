@@ -13,7 +13,7 @@ use suites::SupportedCipherSuite;
 use cipher::{MessageDecrypter, MessageEncrypter, self};
 use vecbuf::{ChunkVecBuffer, WriteV};
 use key;
-use key_schedule::{SecretKind, KeySchedule};
+use key_schedule::{SecretKind, KeySchedule, Protocol};
 use prf;
 use rand;
 use quic;
@@ -395,7 +395,7 @@ pub struct SessionCommon {
     message_encrypter: Box<MessageEncrypter>,
     message_decrypter: Box<MessageDecrypter>,
     pub secrets: Option<SessionSecrets>,
-    key_schedule: Option<KeySchedule>,
+    pub key_schedule: Option<KeySchedule>,
     suite: Option<&'static SupportedCipherSuite>,
     write_seq: u64,
     read_seq: u64,
@@ -412,6 +412,9 @@ pub struct SessionCommon {
     sendable_plaintext: ChunkVecBuffer,
     pub sendable_tls: ChunkVecBuffer,
     pub hs_transcript: hash_hs::HandshakeHash,
+    /// Protocol whose key schedule should be used. Unused for TLS < 1.3.
+    pub protocol: Protocol,
+    pub quic: Quic,
 }
 
 impl SessionCommon {
@@ -439,6 +442,8 @@ impl SessionCommon {
             sendable_plaintext: ChunkVecBuffer::new(),
             sendable_tls: ChunkVecBuffer::new(),
             hs_transcript: hash_hs::HandshakeHash::new(),
+            protocol: Protocol::Tls13,
+            quic: Quic::new(),
         }
     }
 
@@ -737,6 +742,21 @@ impl SessionCommon {
 
     /// Send a raw TLS message, fragmenting it if needed.
     pub fn send_msg(&mut self, m: Message, must_encrypt: bool) {
+        #[cfg(feature = "quic")]
+        {
+            if let Protocol::Quic = self.protocol {
+                if let MessagePayload::Alert(alert) = m.payload {
+                    self.quic.alert = Some(alert.description);
+                } else {
+                    debug_assert!(if let MessagePayload::Handshake(_) = m.payload { true } else { false },
+                                  "QUIC uses TLS for the cryptographic handshake only");
+                    let mut bytes = Vec::new();
+                    m.payload.encode(&mut bytes);
+                    self.sendable_tls.append(bytes);
+                }
+                return;
+            }
+        }
         if !must_encrypt {
             let mut to_send = VecDeque::new();
             self.message_fragmenter.fragment(m, &mut to_send);
@@ -858,4 +878,27 @@ impl SessionCommon {
         let enc = self.we_encrypting;
         self.send_msg(m, enc);
     }
+}
+
+
+#[cfg(feature = "quic")]
+pub struct Quic {
+    /// QUIC transport parameters received from the peer during the handshake
+    pub params: Option<Vec<u8>>,
+    pub alert: Option<AlertDescription>,
+}
+
+#[cfg(not(feature = "quic"))]
+pub struct Quic {}
+
+impl Quic {
+    #[cfg(feature = "quic")]
+    pub fn new() -> Self {
+        Self {
+            params: None,
+            alert: None,
+        }
+    }
+    #[cfg(not(feature = "quic"))]
+    pub fn new() -> Self { Self {} }
 }

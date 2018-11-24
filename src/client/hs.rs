@@ -21,7 +21,7 @@ use msgs::persist;
 use msgs::ccs::ChangeCipherSpecPayload;
 use client::ClientSessionImpl;
 use session::SessionSecrets;
-use key_schedule::{KeySchedule, SecretKind};
+use key_schedule::{KeySchedule, SecretKind, Protocol};
 use cipher;
 use suites;
 use hash_hs;
@@ -153,7 +153,7 @@ pub fn fill_in_psk_binder(sess: &mut ClientSessionImpl,
 
     // Run a fake key_schedule to simulate what the server will do if it choses
     // to resume.
-    let mut key_schedule = KeySchedule::new(suite_hash);
+    let mut key_schedule = KeySchedule::new(suite_hash, sess.common.protocol);
     key_schedule.input_secret(&resuming.master_secret.0);
     let base_key = key_schedule.derive(SecretKind::ResumptionPSKBinderKey, &empty_hash);
     let real_binder = key_schedule.sign_verify_data(&base_key, &handshake_hash);
@@ -202,6 +202,11 @@ struct ExpectServerHello {
 struct ExpectServerHelloOrHelloRetryRequest(ExpectServerHello);
 
 fn emit_fake_ccs(hs: &mut HandshakeDetails, sess: &mut ClientSessionImpl) {
+    #[cfg(feature = "quic")]
+    {
+        if let Protocol::Quic = sess.common.protocol { return; }
+    }
+
     if hs.sent_tls13_fake_ccs {
         return;
     }
@@ -541,7 +546,7 @@ impl ExpectServerHello {
             // Discard the early data key schedule.
             sess.early_data.rejected();
             sess.common.early_traffic = false;
-            let mut key_schedule = KeySchedule::new(suite.get_hash());
+            let mut key_schedule = KeySchedule::new(suite.get_hash(), sess.common.protocol);
             key_schedule.input_empty();
             sess.common.set_key_schedule(key_schedule);
             self.handshake.resuming_session.take();
@@ -694,13 +699,6 @@ impl State for ExpectServerHello {
         // Extract ALPN protocol
         if !sess.common.is_tls13() {
             process_alpn_protocol(sess, server_hello.get_alpn_protocol())?;
-        }
-
-        // Reject QUIC if TLS1.2 is in use.
-        if !sess.common.is_tls13() &&
-            server_hello.find_extension(ExtensionType::TransportParameters).is_some() {
-            sess.common.send_fatal_alert(AlertDescription::UnsupportedExtension);
-            return Err(TLSError::PeerMisbehavedError("server wants to do quic+tls1.2".to_string()));
         }
 
         // If ECPointFormats extension is supplied by the server, it must contain
@@ -1004,9 +1002,12 @@ impl State for ExpectTLS13EncryptedExtensions {
         validate_encrypted_extensions(sess, &self.hello, exts)?;
         process_alpn_protocol(sess, exts.get_alpn_protocol())?;
 
-        // QUIC transport parameters
-        if let Some(params) = exts.get_quic_params_extension() {
-            sess.quic_params = Some(params);
+        #[cfg(feature = "quic")]
+        {
+            // QUIC transport parameters
+            if let Some(params) = exts.get_quic_params_extension() {
+                sess.common.quic.params = Some(params);
+            }
         }
 
         if self.handshake.resuming_session.is_some() {

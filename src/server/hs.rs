@@ -24,7 +24,7 @@ use msgs::persist;
 use session::SessionSecrets;
 use cipher;
 use server::ServerSessionImpl;
-use key_schedule::{KeySchedule, SecretKind};
+use key_schedule::{KeySchedule, SecretKind, Protocol};
 use suites;
 use verify;
 use util;
@@ -216,9 +216,12 @@ impl ExpectClientHello {
             }
         }
 
-        // QUIC transport parameters
-        if let (Some(params), true) = (hello.get_quic_params_extension(), sess.common.is_tls13()) {
-            sess.quic_params = Some(params);
+        #[cfg(feature = "quic")]
+        {
+            // QUIC transport parameters
+            if let Some(params) = hello.get_quic_params_extension() {
+                sess.common.quic.params = Some(params);
+            }
         }
 
         // SNI
@@ -302,7 +305,7 @@ impl ExpectClientHello {
         let suite_hash = sess.common.get_suite_assert().get_hash();
         let handshake_hash = sess.common.hs_transcript.get_hash_given(suite_hash, &binder_plaintext);
 
-        let mut key_schedule = KeySchedule::new(suite_hash);
+        let mut key_schedule = KeySchedule::new(suite_hash, sess.common.protocol);
         key_schedule.input_secret(psk);
         let base_key = key_schedule.derive(SecretKind::ResumptionPSKBinderKey,
                                            key_schedule.get_hash_of_empty_message());
@@ -357,7 +360,7 @@ impl ExpectClientHello {
 
         // Start key schedule
         let suite = sess.common.get_suite_assert();
-        let mut key_schedule = KeySchedule::new(suite.get_hash());
+        let mut key_schedule = KeySchedule::new(suite.get_hash(), sess.common.protocol);
         if let Some(psk) = resuming_psk {
             key_schedule.input_secret(&psk);
         } else {
@@ -385,6 +388,10 @@ impl ExpectClientHello {
 
     fn emit_fake_ccs(&mut self,
                      sess: &mut ServerSessionImpl) {
+        #[cfg(feature = "quic")]
+        {
+            if let Protocol::Quic = sess.common.protocol { return; }
+        }
         let m = Message {
             typ: ContentType::ChangeCipherSpec,
             version: ProtocolVersion::TLSv1_2,

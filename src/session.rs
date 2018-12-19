@@ -826,6 +826,16 @@ impl SessionCommon {
                               kur: &KeyUpdateRequest,
                               read_kind: SecretKind)
                               -> Result<(), TLSError> {
+        #[cfg(feature = "quic")]
+        {
+            if let Protocol::Quic = self.protocol {
+                self.send_fatal_alert(AlertDescription::UnexpectedMessage);
+                let msg = "KeyUpdate received in QUIC connection".to_string();
+                warn!("{}", msg);
+                return Err(TLSError::PeerMisbehavedError(msg));
+            }
+        }
+
         // Mustn't be interleaved with other handshake messages.
         if !self.handshake_joiner.is_empty() {
             let msg = "KeyUpdate received at wrong time".to_string();

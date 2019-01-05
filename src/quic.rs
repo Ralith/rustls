@@ -1,8 +1,7 @@
 /// This module contains optional APIs for implementing QUIC TLS.
 use client::{ClientConfig, ClientSession, ClientSessionImpl};
-use msgs::base::Payload;
-use msgs::enums::{ExtensionType, ContentType, ProtocolVersion, AlertDescription};
-use msgs::handshake::{ClientExtension, ServerExtension, UnknownExtension};
+use msgs::enums::{ContentType, ProtocolVersion, AlertDescription};
+use msgs::handshake::{ClientExtension, ServerExtension};
 use msgs::message::{Message, MessagePayload};
 use server::{ServerConfig, ServerSession, ServerSessionImpl};
 use error::TLSError;
@@ -135,10 +134,7 @@ pub trait ClientQuicExt {
         let mut imp = ClientSessionImpl::new(config);
         imp.common.protocol = Protocol::Quic;
         imp.start_handshake(hostname.into(), vec![
-            ClientExtension::Unknown(UnknownExtension {
-                typ: ExtensionType::TransportParameters,
-                payload: Payload::new(params),
-            })
+            ClientExtension::TransportParameters(params),
         ]);
         ClientSession { imp }
     }
@@ -154,10 +150,7 @@ pub trait ServerQuicExt {
     fn new_quic(config: &Arc<ServerConfig>, params: Vec<u8>) -> ServerSession {
         assert!(config.versions.iter().all(|x| x.get_u16() >= ProtocolVersion::TLSv1_3.get_u16()), "QUIC requires TLS version >= 1.3");
         let mut imp = ServerSessionImpl::new(config, vec![
-            ServerExtension::Unknown(UnknownExtension {
-                typ: ExtensionType::TransportParameters,
-                payload: Payload::new(params),
-            }),
+            ServerExtension::TransportParameters(params),
         ]);
         imp.common.protocol = Protocol::Quic;
         ServerSession { imp }

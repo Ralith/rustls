@@ -334,6 +334,8 @@ fn emit_client_hello_for_retry(sess: &mut ClientSessionImpl,
             .alpn_protocols)));
     }
 
+    // Extra extensions must be placed before the PSK extension
+    exts.extend(handshake.extra_exts.iter().cloned());
 
     let fill_in_binder = if support_tls13 && sess.config.enable_tickets &&
                             resume_version == ProtocolVersion::TLSv1_3 &&
@@ -387,8 +389,6 @@ fn emit_client_hello_for_retry(sess: &mut ClientSessionImpl,
     } else {
         false
     };
-
-    exts.extend(handshake.extra_exts.iter().cloned());
 
     // Note what extensions we sent.
     hello.sent_extensions = exts.iter()

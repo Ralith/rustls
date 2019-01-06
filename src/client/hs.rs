@@ -453,6 +453,11 @@ fn emit_client_hello_for_retry(sess: &mut ClientSessionImpl,
         sess.common
             .set_message_encrypter(cipher::new_tls13_write(resuming_suite, &client_early_traffic_secret));
 
+        #[cfg(feature = "quic")]
+        {
+            sess.common.quic.early_secret = Some(client_early_traffic_secret);
+        }
+
         // Now the client can send encrypted early data
         sess.common.early_traffic = true;
         trace!("Starting early data traffic");
